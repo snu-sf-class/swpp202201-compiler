@@ -1,0 +1,31 @@
+#ifndef SC_LIB_PRINT_IR_H
+#define SC_LIB_PRINT_IR_H
+
+/**
+ * @file print_ir.h
+ * @author SWPP TAs (swpp@sf.snu.ac.kr)
+ * @brief Module to conditionally print the given LLVM IR program
+ * @version 0.1
+ * @date 2022-04-28
+ * @copyright Copyright (c) 2022-2022 SWPP TAs
+ */
+
+#include "llvm/IR/Module.h"
+
+#include <string>
+
+namespace sc::print_ir {
+/**
+ * @brief Start to print the IR whenever printIRIfVerbose() is called
+ */
+void setVerbose() noexcept;
+
+/**
+ * @brief Print the given IR program if setVerbose() was called before
+ * @param pass_name Name of the last pass that was applied to this IR
+ */
+void printIRIfVerbose(const llvm::Module &,
+                      const std::string_view pass_name) noexcept;
+} // namespace sc::print_ir
+
+#endif // SC_LIB_PRINT_IR_H
