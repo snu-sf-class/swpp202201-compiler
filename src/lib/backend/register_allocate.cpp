@@ -272,10 +272,8 @@ static void recursivelyInsertSymbols(symbol::SymbolMap *SM,
   }
   llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(V);
   assert(I && "It should be an instruction.");
-  if (color.count(I)) {
+  if (color.count(I))
     SM->addSymbol(I, symbol::Symbol::createRegisterSymbol(color[I]));
-    return;
-  }
   for (llvm::Value *use : I->operand_values())
     recursivelyInsertSymbols(SM, color, use);
   if (llvm::Instruction *MV = analysis::isMoveInst(I)) {

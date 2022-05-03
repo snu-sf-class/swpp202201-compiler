@@ -57,7 +57,7 @@ add_backend_pass(SCBackendConstExprElimPass const_expr_eliminate.cpp)
 add_backend_pass(SCBackendGEPElimPass gep_eliminate.cpp)
 add_backend_pass(SCBackendGVElimPass gv_eliminate.cpp)
 add_backend_pass(SCBackendAllocaElimPass alloca_eliminate.cpp)
-add_backend_pass(SCBackendMallocMakePass malloc_make.cpp)
+add_backend_pass(SCBackendGEPConstCombPass gep_const_combine.cpp)
 add_backend_pass(SCBackendPHIPreprocessPass phi_preprocess.cpp)
 add_backend_pass(SCBackendRegAllocPass register_allocate.cpp)
 
@@ -69,8 +69,8 @@ target_link_libraries(SCBackend PRIVATE
                         SCBackendEmitter SCBackendSymbol
                         SCBackendConstExprElimPass SCBackendGEPElimPass
                         SCBackendGVElimPass SCBackendAllocaElimPass
-                        SCBackendMallocMakePass SCBackendPHIPreprocessPass
-                        SCBackendRegAllocPass ${pass_llvm_libs})
+                        SCBackendGEPConstCombPass SCBackendPHIPreprocessPass
+                        SCBackendRegAllocPass)
 
 set(SRC_OPT_DIR ${SRC_DIR}/lib/opt)
 add_library(OptPasses INTERFACE)

@@ -700,6 +700,9 @@ void AssemblyEmitter::visitFunction(llvm::Function &__function) {
     const auto end_fn = std::move(*function_to_close);
     assembly_lines.push_back(end_fn.getAssembly());
     function_to_close.reset();
+
+    // insert an empty line between two functions
+    assembly_lines.push_back("");
   }
 
   if (__function.isDeclaration()) {

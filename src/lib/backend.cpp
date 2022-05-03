@@ -6,10 +6,7 @@
 #include "backend/gep_eliminate.h"
 #include "backend/gv_eliminate.h"
 #include "backend/alloca_eliminate.h"
-#include "llvm/Pass.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "backend/malloc_make.h"
+#include "backend/gep_const_combine.h"
 #include "backend/phi_preprocess.h"
 #include "backend/register_allocate.h"
 #include "print_ir.h"
@@ -28,17 +25,12 @@ emitAssembly(std::unique_ptr<llvm::Module> &&__M,
 
   symbol::SymbolMap SM;
   llvm::ModulePassManager MPM;
-  llvm::FunctionPassManager FPM;
-  uint64_t malloc_size;
   try {
     MPM.addPass(ce_elim::ConstExprEliminatePass());
     MPM.addPass(gep_elim::GEPEliminatePass());
-    MPM.addPass(gv_elim::GVEliminatePass(malloc_size));
+    MPM.addPass(gv_elim::GVEliminatePass());
     MPM.addPass(alloca_elim::AllocaEliminatePass());
-    FPM.addPass(llvm::InstCombinePass());
-    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
-    MPM.addPass(malloc_mk::MallocMakePass(malloc_size));
-    MPM.addPass(ce_elim::ConstExprEliminatePass());
+    MPM.addPass(gc_comb::GEPConstCombinePass());
     MPM.addPass(phi_prep::PHIPreprocessPass());
     MPM.addPass(reg_alloc::RegisterAllocatePass(SM));
     MPM.run(*__M, __MAM);
