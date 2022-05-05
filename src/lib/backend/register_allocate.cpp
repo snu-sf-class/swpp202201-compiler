@@ -11,10 +11,18 @@
 #include <map>
 #include <queue>
 
-namespace sc::backend::reg_alloc {
-static void PostOrderRegCollect(llvm::BasicBlock &BB,
-                                std::vector<llvm::Instruction *> &insts,
-                                std::set<llvm::BasicBlock *> &visit) {
+namespace {
+using namespace sc::backend;
+
+constexpr unsigned int MAX_ARGUMENT = 16U;
+constexpr unsigned int MAX_REGISTER = 32U;
+constexpr unsigned int LOAD_COST = 6U;
+constexpr unsigned int STORE_COST = 6U;
+constexpr unsigned int UNKNOWN_LOOP_CNT = 100U;
+
+void PostOrderRegCollect(llvm::BasicBlock &BB,
+                         std::vector<llvm::Instruction *> &insts,
+                         std::set<llvm::BasicBlock *> &visit) {
   visit.insert(&BB);
   llvm::Instruction *term = BB.getTerminator();
   unsigned int num = term->getNumSuccessors();
@@ -29,7 +37,7 @@ static void PostOrderRegCollect(llvm::BasicBlock &BB,
   }
 }
 
-static void makeInterferenceGraph(
+void makeInterferenceGraph(
     llvm::Function &F,
     std::map<llvm::Instruction *, std::set<llvm::Instruction *>> &inter_graph) {
   std::vector<llvm::Instruction *> insts; // post-order DFS-traversal
@@ -133,16 +141,23 @@ bool resolvePHIInterference(
     llvm::IntegerType *Int64Ty) {
   bool flag = true;
   for (auto &[I, S] : inter_graph)
-    if (llvm::PHINode *phi = llvm::dyn_cast<llvm::PHINode>(I))
+    if (llvm::PHINode *phi = llvm::dyn_cast<llvm::PHINode>(I)) {
+      std::vector<llvm::Instruction *> parent;
+      std::set<llvm::Instruction *> inter = S;
       for (int i = 0; i < phi->getNumIncomingValues(); i++) {
         llvm::Value *v = phi->getIncomingValue(i);
-        llvm::Value *w = v;
-        while (llvm::Instruction *next = analysis::isMoveInst(w))
-          w = next->getOperand(0);
-        llvm::Instruction *p = llvm::dyn_cast<llvm::Instruction>(w);
+        while (llvm::Instruction *next = analysis::isMoveInst(v))
+          v = next->getOperand(0);
+        llvm::Instruction *p = llvm::dyn_cast<llvm::Instruction>(v);
         assert(p && "It should be an instruction.");
-        if (S.count(p)) {
+        parent.push_back(p);
+        inter.insert(inter_graph[p].cbegin(), inter_graph[p].cend());
+      }
+      size_t size = parent.size();
+      for (int i = 0; i < size; i++)
+        if (inter.count(parent[i])) {
           llvm::Instruction *t = phi->getIncomingBlock(i)->getTerminator();
+          llvm::Value *v = phi->getIncomingValue(i);
           llvm::Type *type = v->getType();
           if (!type->isIntegerTy())
             v = llvm::CastInst::CreateBitOrPointerCast(v, Int64Ty, "", t);
@@ -153,7 +168,7 @@ bool resolvePHIInterference(
           phi->setIncomingValue(i, v);
           flag = false;
         }
-      }
+    }
   return flag;
 }
 
@@ -183,7 +198,7 @@ void coalescePHINodes(
   }
 }
 
-static void PerfectEliminationOrdering(
+void PerfectEliminationOrdering(
     std::map<llvm::Instruction *, std::set<llvm::Instruction *>>
         inter_graph, // should be copied
     std::vector<llvm::Instruction *> &order) {
@@ -225,7 +240,7 @@ static void PerfectEliminationOrdering(
   }
 }
 
-static int GreedyColoring(
+int GreedyColoring(
     std::map<llvm::Instruction *, std::set<llvm::Instruction *>> &inter_graph,
     std::vector<llvm::Instruction *> &order,
     std::map<llvm::Instruction *, int> &color) {
@@ -245,11 +260,9 @@ static int GreedyColoring(
   return num_colors;
 }
 
-static unsigned int MAX_ARGUMENT = 16;
-
-static void recursivelyInsertSymbols(symbol::SymbolMap *SM,
-                                     std::map<llvm::Instruction *, int> &color,
-                                     llvm::Value *V) {
+void recursivelyInsertSymbols(symbol::SymbolMap *SM,
+                              std::map<llvm::Instruction *, int> &color,
+                              llvm::Value *V) {
   if (SM->getSymbol(V))
     return;
   if (llvm::ConstantInt *C = llvm::dyn_cast<llvm::ConstantInt>(V)) {
@@ -296,7 +309,7 @@ static void recursivelyInsertSymbols(symbol::SymbolMap *SM,
   }
 }
 
-static void propagatePHINodeColors(std::map<llvm::Instruction *, int> &color) {
+void propagatePHINodeColors(std::map<llvm::Instruction *, int> &color) {
   std::vector<std::pair<llvm::Instruction *, int>> buff;
 
   for (auto &[I, c] : color)
@@ -312,8 +325,8 @@ static void propagatePHINodeColors(std::map<llvm::Instruction *, int> &color) {
     color[I] = c;
 }
 
-static void insertSymbols(symbol::SymbolMap *SM, llvm::Function &F,
-                          std::map<llvm::Instruction *, int> &color) {
+void insertSymbols(symbol::SymbolMap *SM, llvm::Function &F,
+                   std::map<llvm::Instruction *, int> &color) {
   int i = 1;
   for (llvm::Argument &arg : F.args()) {
     assert(i <= MAX_ARGUMENT && "Too many arguments.");
@@ -331,14 +344,9 @@ static void insertSymbols(symbol::SymbolMap *SM, llvm::Function &F,
       recursivelyInsertSymbols(SM, color, &I);
 }
 
-static unsigned int MAX_REGISTER = 32U;
-static unsigned int LOAD_COST = 6U;
-static unsigned int STORE_COST = 6U;
-static unsigned int UNKNOWN_LOOP_CNT = 100U;
-
-static void insertLoadStore(std::vector<llvm::Instruction *> &insts,
-                            llvm::CallInst *SP, llvm::IntegerType *Int64Ty,
-                            llvm::PointerType *Int64PtrTy) {
+void insertLoadStore(std::vector<llvm::Instruction *> &insts,
+                     llvm::CallInst *SP, llvm::IntegerType *Int64Ty,
+                     llvm::PointerType *Int64PtrTy) {
   std::vector<llvm::Instruction *> stores;
   std::vector<llvm::Use *> loads;
 
@@ -395,11 +403,10 @@ static void insertLoadStore(std::vector<llvm::Instruction *> &insts,
   }
 }
 
-static void spillColors(llvm::Function &F, int num_colors,
-                        std::map<llvm::Instruction *, int> &color,
-                        llvm::FunctionCallee &decr_sp,
-                        llvm::IntegerType *Int64Ty,
-                        llvm::PointerType *Int64PtrTy) {
+void spillColors(llvm::Function &F, int num_colors,
+                 std::map<llvm::Instruction *, int> &color,
+                 llvm::FunctionCallee &decr_sp, llvm::IntegerType *Int64Ty,
+                 llvm::PointerType *Int64PtrTy) {
   llvm::DominatorTree DT(F);
   llvm::LoopInfo LI(DT);
   llvm::TargetLibraryInfoImpl TLIImpl;
@@ -472,7 +479,9 @@ static void spillColors(llvm::Function &F, int num_colors,
 
   insertLoadStore(color2inst[min_color], SP, Int64Ty, Int64PtrTy);
 }
+} // namespace
 
+namespace sc::backend::reg_alloc {
 llvm::PreservedAnalyses
 RegisterAllocatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
   std::map<llvm::Instruction *, std::set<llvm::Instruction *>> inter_graph;

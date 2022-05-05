@@ -13,8 +13,16 @@
 namespace sc::backend::symbol {
 class Symbol {
 private:
-  enum class SymbolType { REGISTER, ARGUMENT, STACK_PTR, CONSTANT, FUNC_NAME, BB_LABEL };
-  using DataTy = std::variant<Register, Argument, StackPtr, Constant, FunctionName, BasicBlockLabel>;
+  enum class SymbolType {
+    REGISTER,
+    ARGUMENT,
+    STACK_PTR,
+    CONSTANT,
+    FUNC_NAME,
+    BB_LABEL
+  };
+  using DataTy = std::variant<Register, Argument, StackPtr, Constant,
+                              FunctionName, BasicBlockLabel>;
 
   SymbolType type;
   DataTy data;
@@ -25,8 +33,6 @@ public:
   Symbol &operator=(Symbol &&other) noexcept = default;
 
   std::string getName() const noexcept;
-  int regNo() const noexcept;
-  int argNo() const noexcept;
 
   static Symbol createRegisterSymbol(std::string &&name) noexcept;
   static Symbol createRegisterSymbol(int num) noexcept;

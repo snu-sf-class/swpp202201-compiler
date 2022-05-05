@@ -5,7 +5,6 @@
 
 namespace sc::backend::gep_elim {
 class GEPEliminatePass : public llvm::PassInfoMixin<GEPEliminatePass> {
-
 public:
   llvm::PreservedAnalyses run(llvm::Module &, llvm::ModuleAnalysisManager &);
 };

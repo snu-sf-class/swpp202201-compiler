@@ -4,7 +4,6 @@
 #include "llvm/IR/PassManager.h"
 
 namespace sc::backend::phi_prep {
-
 class PHIPreprocessPass : public llvm::PassInfoMixin<PHIPreprocessPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Module &, llvm::ModuleAnalysisManager &);

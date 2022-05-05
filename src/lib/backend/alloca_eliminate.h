@@ -5,7 +5,6 @@
 
 namespace sc::backend::alloca_elim {
 class AllocaEliminatePass : public llvm::PassInfoMixin<AllocaEliminatePass> {
-
 public:
   llvm::PreservedAnalyses run(llvm::Module &, llvm::ModuleAnalysisManager &);
 };

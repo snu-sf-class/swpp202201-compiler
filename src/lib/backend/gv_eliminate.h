@@ -4,8 +4,6 @@
 #include "llvm/IR/PassManager.h"
 
 namespace sc::backend::gv_elim {
-const uint64_t START_ADDRESS = 204800UL;
-
 class GVEliminatePass : public llvm::PassInfoMixin<GVEliminatePass> {
 public:
   llvm::PreservedAnalyses run(llvm::Module &, llvm::ModuleAnalysisManager &);

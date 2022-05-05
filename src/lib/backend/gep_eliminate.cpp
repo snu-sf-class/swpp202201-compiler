@@ -4,6 +4,38 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 
+using namespace std::string_literals;
+
+namespace {
+  template <typename E> class ErrorWithGEP : public Error<ErrorWithGEP<E>> {
+private:
+  std::string message;
+
+public:
+  ErrorWithGEP(E &&__err, const llvm::GetElementPtrInst &__gep) noexcept {
+    std::string gep;
+    llvm::raw_string_ostream rso(gep);
+    rso << __gep;
+
+    message = std::string(__err.what()).append("\n["s).append(gep).append("]"s);
+  }
+
+  const char *what() const noexcept { return message.c_str(); }
+};
+
+template <typename T, typename E>
+T unwrapOrThrowWithGEP(Result<T, E> &&__res, const llvm::GetElementPtrInst &__gep) {
+  using ResType = Result<T, E>;
+
+  if (__res.isErr()) {
+    auto err = ResType::inspect(std::move(__res));
+    throw ErrorWithGEP(std::move(err), __gep);
+  }
+
+  return ResType::unwrap(std::move(__res));
+}
+}
+
 namespace sc::backend::gep_elim {
 llvm::PreservedAnalyses
 GEPEliminatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
@@ -27,7 +59,7 @@ GEPEliminatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
           v.push_back(pti);
           for (auto opIt = GEPI->idx_begin(); opIt != GEPI->idx_end(); ++opIt) {
             llvm::Value *op = *opIt;
-            uint64_t size = analysis::getSize(curr);
+            const auto size = unwrapOrThrowWithGEP(analysis::tryCalculateSize(curr), *GEPI);
             llvm::Instruction *mul = llvm::BinaryOperator::CreateMul(
                 op, llvm::ConstantInt::get(Int64Ty, size, true), "", GEPI);
             llvm::Instruction *add =

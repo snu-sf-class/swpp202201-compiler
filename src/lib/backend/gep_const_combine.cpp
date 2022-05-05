@@ -5,10 +5,10 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Scalar/DCE.h"
 
-namespace sc::backend::gc_comb {
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
+namespace sc::backend::gc_comb {
 PreservedAnalyses GEPConstCombinePass::run(Module &M,
                                            ModuleAnalysisManager &MAM) {
   FunctionAnalysisManager &FAM =

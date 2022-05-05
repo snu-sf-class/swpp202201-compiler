@@ -3,9 +3,9 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
-namespace sc::backend::ce_elim {
 using namespace llvm;
 
+namespace sc::backend::ce_elim {
 PreservedAnalyses ConstExprEliminatePass::run(Module &M,
                                               ModuleAnalysisManager &MAM) {
   for (Function &F : M)

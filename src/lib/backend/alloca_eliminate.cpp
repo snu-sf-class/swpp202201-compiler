@@ -4,6 +4,47 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 
+using namespace std::string_literals;
+
+namespace {
+class NonStaticAllocaError : public Error<NonStaticAllocaError> {
+public:
+  const char *what() const noexcept {
+    return "alloca elimination error: alloca is not static";
+  }
+};
+
+template <typename E> class ErrorWithAlloca : public Error<ErrorWithAlloca<E>> {
+private:
+  std::string message;
+
+public:
+  ErrorWithAlloca(E &&__err, const llvm::AllocaInst &__alloca) noexcept {
+    std::string alloca;
+    llvm::raw_string_ostream rso(alloca);
+    rso << __alloca;
+
+    message =
+        std::string(__err.what()).append("\n["s).append(alloca).append("]"s);
+  }
+
+  const char *what() const noexcept { return message.c_str(); }
+};
+
+template <typename T, typename E>
+T unwrapOrThrowWithAlloca(Result<T, E> &&__res,
+                          const llvm::AllocaInst &__alloca) {
+  using ResType = Result<T, E>;
+
+  if (__res.isErr()) {
+    auto err = ResType::inspect(std::move(__res));
+    throw ErrorWithAlloca(std::move(err), __alloca);
+  }
+
+  return ResType::unwrap(std::move(__res));
+}
+} // namespace
+
 namespace sc::backend::alloca_elim {
 llvm::PreservedAnalyses
 AllocaEliminatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
@@ -17,10 +58,16 @@ AllocaEliminatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     for (llvm::BasicBlock &BB : F)
       for (llvm::Instruction &I : BB) {
         if (llvm::AllocaInst *AI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
-          assert(AI->isStaticAlloca() && "alloca is not static.");
-          acc += (analysis::getSize(AI->getAllocatedType()) + 7UL) / 8UL * 8UL;
+          if (!AI->isStaticAlloca()) {
+            throw ErrorWithAlloca(NonStaticAllocaError(), *AI);
+          }
+          const auto req_size = unwrapOrThrowWithAlloca(
+              analysis::tryCalculateSize(AI->getAllocatedType()), *AI);
+          const auto alloc_size = (req_size + 7UL) & (UINT64_MAX - 7UL);
+          acc += alloc_size;
         }
       }
+
     if (acc) {
       llvm::Instruction *FI = F.getEntryBlock().getFirstNonPHI();
       llvm::ConstantInt *Const = llvm::ConstantInt::get(Int64Ty, acc, true);
@@ -40,8 +87,10 @@ AllocaEliminatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
                 Sub, AI->getType(), "", AI);
             AI->replaceAllUsesWith(Cast);
             trashBin.emplace_back(AI);
-            acc +=
-                (analysis::getSize(AI->getAllocatedType()) + 7UL) / 8UL * 8UL;
+            const auto req_size = unwrapOrThrowWithAlloca(
+                analysis::tryCalculateSize(AI->getAllocatedType()), *AI);
+            const auto alloc_size = (req_size + 7UL) & (UINT64_MAX - 7UL);
+            acc += alloc_size;
           }
       for (llvm::Instruction *AI : trashBin)
         AI->eraseFromParent();

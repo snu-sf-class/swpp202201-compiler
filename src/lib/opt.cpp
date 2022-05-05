@@ -3,6 +3,8 @@
 #include "../static_error.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 
+#include "llvm/Transforms/Scalar/GVN.h"
+
 #include "print_ir.h"
 
 using namespace std::string_literals;
@@ -25,6 +27,7 @@ optimizeIR(std::unique_ptr<llvm::Module> &&__M,
     // Add loop-level opt passes below
 
     // Add function-level opt passes below
+    FPM.addPass(llvm::GVNPass());
 
     CGPM.addPass(llvm::createCGSCCToFunctionPassAdaptor(std::move(FPM)));
     // Add CGSCC-level opt passes below

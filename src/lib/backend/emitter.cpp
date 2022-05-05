@@ -511,7 +511,8 @@ std::string emitFromDecrSPIntrinsic(llvm::CallInst &__inst) {
   auto arg = unwrapOrThrowWithInst(tryParseValue(arg_str), __inst);
 
   const auto inst = sc::backend::assembly::IntSubInst::create(
-      GeneralRegister::SP, BitWidth::QWORD, GeneralRegister::SP, std::move(arg));
+      GeneralRegister::SP, BitWidth::QWORD, GeneralRegister::SP,
+      std::move(arg));
   return inst.getAssembly();
 }
 
@@ -787,7 +788,6 @@ void AssemblyEmitter::visitStoreInst(llvm::StoreInst &__inst) {
 void AssemblyEmitter::visitSExtInst(llvm::SExtInst &__inst) {
   auto beforeBits = __inst.getOperand(0)->getType()->getIntegerBitWidth();
   auto afterBits = __inst.getType()->getIntegerBitWidth();
-  assert(afterBits > beforeBits && "SExt must increase the bandwidth");
 
   const auto target_str = unwrapOrThrowWithInst(tryGetName(&__inst), __inst);
   const auto target =
