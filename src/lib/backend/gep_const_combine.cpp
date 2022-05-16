@@ -60,7 +60,7 @@ PreservedAnalyses GEPConstCombinePass::run(Module &M,
             updated = true;
             Constant *C = ConstantInt::get(I.getType(), -1, true);
             BinaryOperator *B = BinaryOperator::CreateMul(V0, C, "", &I);
-            I.replaceAllUsesWith(V0);
+            I.replaceAllUsesWith(B);
           } else if (match(&I, m_Mul(m_Value(V0), m_ConstantInt(C0))) &&
                      C0->isZero()) {
             updated = true;

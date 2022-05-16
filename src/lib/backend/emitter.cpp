@@ -688,6 +688,70 @@ std::string emitFromIntDecrIntrinsic(llvm::CallInst &__inst) {
   return inst.getAssembly();
 }
 
+bool isIntAssertionIntrinsic(llvm::CallInst &__inst) {
+  const auto fn_name = __inst.getCalledFunction()->getName();
+  if (fn_name == "assert_eq_i1" || fn_name == "assert_eq_i8" ||
+      fn_name == "assert_eq_i16" || fn_name == "assert_eq_i32" ||
+      fn_name == "assert_eq_i64") {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+Result<BitWidth, IllFormedIntrinsicError>
+tryCalculateIntAssertionBitWidth(llvm::CallInst &__inst) noexcept {
+  using RetType = Result<BitWidth, IllFormedIntrinsicError>;
+
+  llvm::Type *assert_ty = nullptr;
+  auto &ctx = __inst.getContext();
+
+  const auto fn_name = __inst.getCalledFunction()->getName();
+  if (fn_name == "assert_eq_i1") {
+    assert_ty = llvm::Type::getInt1Ty(ctx);
+  } else if (fn_name == "assert_eq_i8") {
+    assert_ty = llvm::Type::getInt8Ty(ctx);
+  } else if (fn_name == "assert_eq_i16") {
+    assert_ty = llvm::Type::getInt16Ty(ctx);
+  } else if (fn_name == "assert_eq_i32") {
+    assert_ty = llvm::Type::getInt32Ty(ctx);
+  } else if (fn_name == "assert_eq_i64") {
+    assert_ty = llvm::Type::getInt64Ty(ctx);
+  }
+
+  if (assert_ty && __inst.arg_size() == 2) {
+    const auto is_tys_match =
+        std::accumulate(__inst.arg_begin(), __inst.arg_end(), true,
+                        [assert_ty](const bool acc, const auto &arg) {
+                          return acc && (assert_ty == arg->getType());
+                        });
+    if (is_tys_match) {
+      auto bw_res = tryCalculateBitWidth(assert_ty);
+      return decltype(bw_res)::mapErr<IllFormedIntrinsicError>(
+          std::move(bw_res),
+          [&__inst](auto &&err) { return IllFormedIntrinsicError(__inst); });
+    }
+  }
+  return RetType::Err(IllFormedIntrinsicError(__inst));
+}
+
+std::string emitFromIntAssertionIntrinsic(llvm::CallInst &__inst) {
+  const auto bw =
+      unwrapOrThrowWithInst(tryCalculateIntAssertionBitWidth(__inst), __inst);
+
+  const auto arg1_str =
+      unwrapOrThrowWithInst(tryGetName(__inst.getArgOperand(0)), __inst);
+  auto arg1 = unwrapOrThrowWithInst(tryParseValue(arg1_str), __inst);
+
+  const auto arg2_str =
+      unwrapOrThrowWithInst(tryGetName(__inst.getArgOperand(1)), __inst);
+  auto arg2 = unwrapOrThrowWithInst(tryParseValue(arg2_str), __inst);
+
+  const auto inst = sc::backend::assembly::AssertEqInst::create(
+      std::move(arg1), std::move(arg2));
+  return inst.getAssembly();
+}
+
 std::optional<sc::backend::assembly::FunctionEndInst> function_to_close;
 } // namespace
 
@@ -863,6 +927,9 @@ void AssemblyEmitter::visitCallInst(llvm::CallInst &__inst) {
     return;
   } else if (isIntDecrIntrinsic(__inst)) {
     assembly_lines.push_back(emitFromIntDecrIntrinsic(__inst));
+    return;
+  } else if (isIntAssertionIntrinsic(__inst)) {
+    assembly_lines.push_back(emitFromIntAssertionIntrinsic(__inst));
     return;
   }
 

@@ -139,7 +139,6 @@ void coalesceMovInsts(
 bool resolvePHIInterference(
     std::map<llvm::Instruction *, std::set<llvm::Instruction *>> &inter_graph,
     llvm::IntegerType *Int64Ty) {
-  bool flag = true;
   for (auto &[I, S] : inter_graph)
     if (llvm::PHINode *phi = llvm::dyn_cast<llvm::PHINode>(I)) {
       std::vector<llvm::Instruction *> parent;
@@ -155,7 +154,9 @@ bool resolvePHIInterference(
       }
       size_t size = parent.size();
       for (int i = 0; i < size; i++)
-        if (inter.count(parent[i])) {
+        if (inter.count(parent[i]) &&
+            parent[i]->getNextNode() !=
+                parent[i]->getParent()->getTerminator()) {
           llvm::Instruction *t = phi->getIncomingBlock(i)->getTerminator();
           llvm::Value *v = phi->getIncomingValue(i);
           llvm::Type *type = v->getType();
@@ -166,10 +167,10 @@ bool resolvePHIInterference(
           if (!type->isIntegerTy())
             v = llvm::CastInst::CreateBitOrPointerCast(v, type, "", t);
           phi->setIncomingValue(i, v);
-          flag = false;
+          return false;
         }
     }
-  return flag;
+  return true;
 }
 
 void coalescePHINodes(
@@ -269,13 +270,8 @@ void recursivelyInsertSymbols(symbol::SymbolMap *SM,
     SM->addSymbol(C, symbol::Symbol::createConstantSymbol(C->getZExtValue()));
     return;
   }
-  if (llvm::isa<llvm::ConstantPointerNull>(V)) {
+  if (llvm::isa<llvm::ConstantPointerNull>(V) || llvm::isa<llvm::UndefValue>(V)) {
     SM->addSymbol(V, symbol::Symbol::createConstantSymbol(0UL));
-    return;
-  }
-  if (llvm::isa<llvm::GlobalVariable>(V)) {
-    SM->addSymbol(V, symbol::Symbol::createConstantSymbol(
-                         std::stoull(V->getName().substr(1).str())));
     return;
   }
   llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);

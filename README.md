@@ -25,6 +25,10 @@ cmake -GNinja -Bbuild
 cmake --build build --target swpp-compiler
 ```
 
+If CMake fails to locate the installed LLVM or you have multiple LLVMs
+installed, you can instruct CMake to use the LLVM in specific location
+by setting the `LLVM_ROOT` variable in the `CMakeLists.txt`.
+
 
 ## How to test
 

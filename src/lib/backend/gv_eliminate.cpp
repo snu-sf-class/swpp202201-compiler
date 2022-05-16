@@ -57,22 +57,40 @@ llvm::PreservedAnalyses GVEliminatePass::run(llvm::Module &M,
                                              llvm::ModuleAnalysisManager &MAM) {
   llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(M.getContext());
   uint64_t acc = 0UL;
-  std::vector<llvm::PtrToIntInst *> trashBin;
+  std::vector<llvm::GlobalVariable *> gvs;
   for (llvm::GlobalVariable &gv : M.globals()) {
+    gvs.push_back(&gv);
     uint64_t addr = START_ADDRESS + acc;
-    gv.setName("$" + std::to_string(addr));
+    std::vector<llvm::PtrToIntInst *> trashBin;
+    std::vector<llvm::Use *> uses;
+    for (llvm::Use &use : gv.uses())
+      uses.push_back(&use);
+    for (llvm::Use *use : uses) {
+      llvm::User *user = use->getUser();
+      if (llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(user)) {
+        if (llvm::PtrToIntInst *PTII = llvm::dyn_cast<llvm::PtrToIntInst>(I)) {
+          llvm::Constant *C =
+              llvm::ConstantInt::get(PTII->getType(), addr, true);
+          PTII->replaceAllUsesWith(C);
+          trashBin.push_back(PTII);
+        } else {
+          llvm::ConstantInt *C = llvm::ConstantInt::get(Int64Ty, addr, true);
+          llvm::CastInst *CI =
+              llvm::CastInst::CreateBitOrPointerCast(C, gv.getType(), "", I);
+          use->set(CI);
+        }
+      }
+    }
+    for (llvm::PtrToIntInst *PTII : trashBin)
+      PTII->eraseFromParent();
     const auto gv_size =
         unwrapOrThrowWithGV(analysis::tryCalculateSize(gv.getValueType()), gv);
     const auto alloc_size = (gv_size + 7UL) & (UINT64_MAX - 7UL);
     acc += alloc_size;
-    for (llvm::User *user : gv.users())
-      if (llvm::PtrToIntInst *PTII = llvm::dyn_cast<llvm::PtrToIntInst>(user)) {
-        PTII->replaceAllUsesWith(llvm::ConstantInt::get(Int64Ty, addr, true));
-        trashBin.push_back(PTII);
-      }
   }
-  for (llvm::PtrToIntInst *PTII : trashBin)
-    PTII->eraseFromParent();
+  for (llvm::GlobalVariable *gv : gvs)
+    gv->eraseFromParent();
+
   if (acc) {
     llvm::Function *F = M.getFunction("main");
     if (!F) {

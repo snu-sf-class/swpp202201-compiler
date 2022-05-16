@@ -684,7 +684,7 @@ std::string CallInst::getAssembly() const noexcept {
 // class AssertEqInst
 //---------------------------------------------------------
 AssertEqInst::AssertEqInst(ValueTy &&__lhs, ValueTy &&__rhs) noexcept
-    : AbstractInst(), lhs(std::move(__rhs)), rhs(std::move(__rhs)) {}
+    : AbstractInst(), lhs(std::move(__lhs)), rhs(std::move(__rhs)) {}
 
 AssertEqInst AssertEqInst::create(ValueTy &&__lhs, ValueTy &&__rhs) noexcept {
   return AssertEqInst(std::move(__lhs), std::move(__rhs));
