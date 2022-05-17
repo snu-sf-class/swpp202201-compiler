@@ -26,6 +26,7 @@ public:
   void visitBranchInst(llvm::BranchInst &);
   void visitSwitchInst(llvm::SwitchInst &);
   void visitBinaryOperator(llvm::BinaryOperator &);
+  void visitUnreachableInst(llvm::UnreachableInst &);
 
   std::string getAssembly() noexcept;
 };

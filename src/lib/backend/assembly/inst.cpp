@@ -185,6 +185,10 @@ std::string BasicBlockInst::getAssembly() const noexcept { return name + ":"s; }
 CommentInst::CommentInst(std::string &&__message) noexcept
     : AbstractInst(), message(std::move(__message)) {}
 
+CommentInst CommentInst::create(std::string &&__message) noexcept {
+  return CommentInst(std::move(__message));
+}
+
 std::string CommentInst::getAssembly() const noexcept {
   return joinTokens(collectOpTokens(";"s, message));
 }

@@ -1143,6 +1143,17 @@ void AssemblyEmitter::visitBinaryOperator(llvm::BinaryOperator &__op) {
   }
 }
 
+void AssemblyEmitter::visitUnreachableInst(llvm::UnreachableInst &__op) {
+  const auto comment = assembly::CommentInst::create("unreachable"s);
+  assembly_lines.push_back(comment.getAssembly());
+  const auto inst = assembly::AssertEqInst::create(IntTy(0), IntTy(1));
+  assembly_lines.push_back(inst.getAssembly());
+  
+  auto bb_label = __op.getParent()->getName().str();
+  const auto term_placeholder = assembly::JumpInst::create(std::move(bb_label));
+  assembly_lines.push_back(term_placeholder.getAssembly());
+}
+
 std::string AssemblyEmitter::getAssembly() noexcept {
   if (function_to_close.has_value()) {
     const auto end_fn = std::move(*function_to_close);

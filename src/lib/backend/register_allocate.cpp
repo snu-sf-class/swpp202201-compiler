@@ -154,10 +154,12 @@ bool resolvePHIInterference(
       }
       size_t size = parent.size();
       for (int i = 0; i < size; i++)
-        if (inter.count(parent[i]) &&
-            parent[i]->getNextNode() !=
-                parent[i]->getParent()->getTerminator()) {
+        if (inter.count(parent[i])) {
+          llvm::Instruction *next = parent[i]->getNextNode();
+          while (next && analysis::isMoveInst(next)) next = next->getNextNode();
           llvm::Instruction *t = phi->getIncomingBlock(i)->getTerminator();
+          if (next == t)
+            continue;
           llvm::Value *v = phi->getIncomingValue(i);
           llvm::Type *type = v->getType();
           if (!type->isIntegerTy())
