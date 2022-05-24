@@ -23,22 +23,29 @@ emitAssembly(std::unique_ptr<llvm::Module> &&__M,
              llvm::ModuleAnalysisManager &__MAM) noexcept {
   using RetType = Result<std::string, BackendInternalError>;
 
-  symbol::SymbolMap SM;
-  llvm::ModulePassManager MPM;
   try {
+    llvm::ModulePassManager MPM;
     MPM.addPass(ce_elim::ConstExprEliminatePass());
     MPM.addPass(gep_elim::GEPEliminatePass());
     MPM.addPass(gv_elim::GVEliminatePass());
     MPM.addPass(alloca_elim::AllocaEliminatePass());
     MPM.addPass(gc_comb::GEPConstCombinePass());
+    MPM.run(*__M, __MAM);
+  } catch (const std::exception &e) {
+    return RetType::Err(BackendInternalError(e));
+  }
+  sc::print_ir::printIRIfVerbose(*__M, "After backend passes"s);
+
+  symbol::SymbolMap SM;
+  try {
+    llvm::ModulePassManager MPM;
     MPM.addPass(phi_prep::PHIPreprocessPass());
     MPM.addPass(reg_alloc::RegisterAllocatePass(SM));
     MPM.run(*__M, __MAM);
   } catch (const std::exception &e) {
     return RetType::Err(BackendInternalError(e));
   }
-
-  sc::print_ir::printIRIfVerbose(*__M, "After backend passes"s);
+  sc::print_ir::printIRIfVerbose(*__M, "After register allocation"s);
 
   std::string assembly;
   try {

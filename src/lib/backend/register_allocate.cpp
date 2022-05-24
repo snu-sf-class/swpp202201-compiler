@@ -8,6 +8,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
+#include <algorithm>
 #include <map>
 #include <queue>
 
@@ -39,7 +40,8 @@ void PostOrderRegCollect(llvm::BasicBlock &BB,
 
 void makeInterferenceGraph(
     llvm::Function &F,
-    std::map<llvm::Instruction *, std::set<llvm::Instruction *>> &inter_graph) {
+    std::map<llvm::Instruction *, std::set<llvm::Instruction *>> &inter_graph,
+    std::map<llvm::Instruction *, int> &inst2num) {
   std::vector<llvm::Instruction *> insts; // post-order DFS-traversal
   std::set<llvm::BasicBlock *> visit;
   std::map<llvm::Instruction *, std::set<llvm::Instruction *>> in, out;
@@ -97,9 +99,12 @@ void makeInterferenceGraph(
       updated = updated || (before != after);
     }
   }
+  int cnt = 0;
   for (llvm::Instruction *I : insts)
-    if (analysis::isReg(I))
+    if (analysis::isReg(I)) {
       inter_graph[I] = {};
+      inst2num[I] = cnt++;
+    }
   for (llvm::Instruction *I : insts)
     if (analysis::isReg(I))
       for (llvm::Instruction *J : out[I])
@@ -156,7 +161,8 @@ bool resolvePHIInterference(
       for (int i = 0; i < size; i++)
         if (inter.count(parent[i])) {
           llvm::Instruction *next = parent[i]->getNextNode();
-          while (next && analysis::isMoveInst(next)) next = next->getNextNode();
+          while (next && analysis::isMoveInst(next))
+            next = next->getNextNode();
           llvm::Instruction *t = phi->getIncomingBlock(i)->getTerminator();
           if (next == t)
             continue;
@@ -204,43 +210,75 @@ void coalescePHINodes(
 void PerfectEliminationOrdering(
     std::map<llvm::Instruction *, std::set<llvm::Instruction *>>
         inter_graph, // should be copied
+    std::map<llvm::Instruction *, int> &inst2num,
     std::vector<llvm::Instruction *> &order) {
   std::map<llvm::Instruction *, int> C;
   std::queue<llvm::Instruction *> Q;
   std::set<llvm::Instruction *> visit;
+  std::vector<llvm::Instruction *> nodes;
   for (auto &[I, S] : inter_graph) {
     size_t size = S.size();
     C[I] = size * (size - 1) / 2;
     std::vector<llvm::Instruction *> neighbor;
     for (llvm::Instruction *X : S)
-      neighbor.emplace_back(X);
+      neighbor.push_back(X);
     for (int i = 0; i < size; i++)
       for (int j = i + 1; j < size; j++)
         C[I] -= inter_graph[neighbor[i]].count(neighbor[j]);
-    if (!C[I]) {
-      Q.push(I);
-      visit.insert(I);
-    }
+    nodes.push_back(I);
   }
-  while (!Q.empty()) {
-    llvm::Instruction *v = Q.front();
-    order.emplace_back(v);
-    Q.pop();
-    size_t size = inter_graph[v].size();
-    for (llvm::Instruction *w : inter_graph[v]) {
-      inter_graph[w].erase(v);
-      C[w] -= inter_graph[w].size() - (size - 1);
-      if (!C[w] && !visit.count(w)) {
-        visit.insert(w);
-        Q.push(w);
+  auto compare = [&](llvm::Instruction *a, llvm::Instruction *b) {
+    return inst2num[a] < inst2num[b];
+  };
+  std::sort(nodes.begin(), nodes.end(), compare);
+  while (order.size() < inter_graph.size()) {
+    auto min = INT32_MAX;
+    const auto min_c_inst =
+        *std::min_element(nodes.cbegin(), nodes.cend(),
+                          [visit, C, &min](const auto min_I, const auto I) {
+                            if (!visit.count(I)) {
+                              const auto c = C.at(I);
+                              if (min >= c) {
+                                min = c;
+                                return false;
+                              }
+                            }
+                            return true;
+                          });
+
+    if (!visit.count(min_c_inst)) {
+      visit.insert(min_c_inst);
+      Q.push(min_c_inst);
+    }
+
+    while (!Q.empty()) {
+      llvm::Instruction *v = Q.front();
+      order.push_back(v);
+      Q.pop();
+
+      size_t size = inter_graph[v].size();
+      std::vector<llvm::Instruction *> adj_nodes;
+      adj_nodes.reserve(size);
+      std::transform(inter_graph[v].cbegin(), inter_graph[v].cend(),
+                     std::back_inserter(adj_nodes),
+                     [](const auto w){ return w; });
+      std::sort(adj_nodes.begin(), adj_nodes.end(), compare);
+
+      for (llvm::Instruction *w : adj_nodes) {
+        inter_graph[w].erase(v);
+        C[w] -= inter_graph[w].size() - (size - 1);
+        if (!C[w] && !visit.count(w)) {
+          visit.insert(w);
+          Q.push(w);
+        }
       }
     }
   }
-  if (order.size() != inter_graph.size()) {
-    order.clear();
-    for (auto &[I, S] : inter_graph)
-      order.emplace_back(I);
-  }
+  // TODO: SSA-form should have chordal interference, but some are shown to be
+  // non-chordal... but why? note:
+  // http://web.cs.ucla.edu/~palsberg/paper/aplas05.pdf
+  assert(order.size() == inter_graph.size() &&
+         "SSA-form should have chordal interference graph.");
 }
 
 int GreedyColoring(
@@ -272,7 +310,8 @@ void recursivelyInsertSymbols(symbol::SymbolMap *SM,
     SM->addSymbol(C, symbol::Symbol::createConstantSymbol(C->getZExtValue()));
     return;
   }
-  if (llvm::isa<llvm::ConstantPointerNull>(V) || llvm::isa<llvm::UndefValue>(V)) {
+  if (llvm::isa<llvm::ConstantPointerNull>(V) ||
+      llvm::isa<llvm::UndefValue>(V)) {
     SM->addSymbol(V, symbol::Symbol::createConstantSymbol(0UL));
     return;
   }
@@ -344,7 +383,8 @@ void insertSymbols(symbol::SymbolMap *SM, llvm::Function &F,
 
 void insertLoadStore(std::vector<llvm::Instruction *> &insts,
                      llvm::CallInst *SP, llvm::IntegerType *Int64Ty,
-                     llvm::PointerType *Int64PtrTy) {
+                     llvm::PointerType *Int64PtrTy,
+                     std::set<llvm::Instruction *> &not_spill) {
   std::vector<llvm::Instruction *> stores;
   std::vector<llvm::Use *> loads;
 
@@ -353,6 +393,9 @@ void insertLoadStore(std::vector<llvm::Instruction *> &insts,
   SP->setArgOperand(0, llvm::ConstantInt::get(Int64Ty, acc + 8, true));
 
   for (llvm::Instruction *I : insts) {
+    if (not_spill.count(I))
+      continue;
+    not_spill.insert(I);
     if (!analysis::isMoveInst(I) && !llvm::isa<llvm::PHINode>(I))
       stores.emplace_back(I);
     for (llvm::Use &use : I->uses()) {
@@ -367,35 +410,49 @@ void insertLoadStore(std::vector<llvm::Instruction *> &insts,
     llvm::Instruction *V = I;
     llvm::Instruction *next = V->getNextNode();
     llvm::Instruction *ptr = SP;
-    if (acc)
+    if (acc) {
       ptr = llvm::BinaryOperator::CreateAdd(
           ptr, llvm::ConstantInt::get(Int64Ty, acc, true), "", next);
+      not_spill.insert(ptr);
+    }
     ptr = llvm::CastInst::CreateBitOrPointerCast(ptr, Int64PtrTy, "", next);
+    not_spill.insert(ptr);
     llvm::Type *type = V->getType();
     if (type->isIntegerTy()) {
-      if (!type->isIntegerTy(64))
+      if (!type->isIntegerTy(64)) {
         V = llvm::CastInst::CreateIntegerCast(V, Int64Ty, false, "", next);
+        not_spill.insert(V);
+      }
     } else {
       V = llvm::CastInst::CreateBitOrPointerCast(V, Int64Ty, "", next);
+      not_spill.insert(V);
     }
     llvm::StoreInst *SI = new llvm::StoreInst(V, ptr, next);
+    not_spill.insert(SI);
   }
   for (llvm::Use *use : loads) {
     llvm::Instruction *user = llvm::dyn_cast<llvm::Instruction>(use->getUser());
     assert(user && "It should be an instruction.");
     llvm::Instruction *ptr = SP;
-    if (acc)
+    if (acc) {
       ptr = llvm::BinaryOperator::CreateAdd(
           ptr, llvm::ConstantInt::get(Int64Ty, acc, true), "", user);
+      not_spill.insert(ptr);
+    }
     ptr = llvm::CastInst::CreateBitOrPointerCast(ptr, Int64PtrTy, "", user);
+    not_spill.insert(ptr);
     llvm::LoadInst *LI = new llvm::LoadInst(Int64Ty, ptr, "", user);
+    not_spill.insert(LI);
     llvm::Instruction *V = LI;
     llvm::Type *type = use->get()->getType();
     if (type->isIntegerTy()) {
-      if (!type->isIntegerTy(64U))
+      if (!type->isIntegerTy(64U)) {
         V = llvm::CastInst::CreateIntegerCast(V, type, false, "", user);
+        not_spill.insert(V);
+      }
     } else {
       V = llvm::CastInst::CreateBitOrPointerCast(V, type, "", user);
+      not_spill.insert(V);
     }
     use->set(V);
   }
@@ -404,7 +461,8 @@ void insertLoadStore(std::vector<llvm::Instruction *> &insts,
 void spillColors(llvm::Function &F, int num_colors,
                  std::map<llvm::Instruction *, int> &color,
                  llvm::FunctionCallee &decr_sp, llvm::IntegerType *Int64Ty,
-                 llvm::PointerType *Int64PtrTy) {
+                 llvm::PointerType *Int64PtrTy,
+                 std::set<llvm::Instruction *> &not_spill) {
   llvm::DominatorTree DT(F);
   llvm::LoopInfo LI(DT);
   llvm::TargetLibraryInfoImpl TLIImpl;
@@ -429,6 +487,8 @@ void spillColors(llvm::Function &F, int num_colors,
   for (int i = 1; i <= num_colors; i++) {
     int cost = 0;
     for (llvm::Instruction *I : color2inst[i]) {
+      if (not_spill.count(I))
+        continue;
       if (!analysis::isMoveInst(I) && !llvm::isa<llvm::PHINode>(I)) {
         unsigned int cnt = 1U;
         if (llvm::Loop *L = LI.getLoopFor(I->getParent())) {
@@ -439,11 +499,11 @@ void spillColors(llvm::Function &F, int num_colors,
         cost += STORE_COST * cnt;
       }
       for (llvm::User *user : I->users()) {
-        llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(user);
+        llvm::Instruction *J = llvm::dyn_cast<llvm::Instruction>(user);
         assert(I);
-        if (!analysis::isMoveInst(I) && !llvm::isa<llvm::PHINode>(I)) {
+        if (!analysis::isMoveInst(J) && !llvm::isa<llvm::PHINode>(J)) {
           unsigned int cnt = 1U;
-          if (llvm::Loop *L = LI.getLoopFor(I->getParent())) {
+          if (llvm::Loop *L = LI.getLoopFor(J->getParent())) {
             cnt = SCE.getSmallConstantTripCount(L);
             if (!cnt)
               cnt = UNKNOWN_LOOP_CNT;
@@ -452,7 +512,7 @@ void spillColors(llvm::Function &F, int num_colors,
         }
       }
     }
-    if (min_cost > cost) {
+    if (cost && min_cost > cost) {
       min_cost = cost;
       min_color = i;
     }
@@ -473,9 +533,10 @@ void spillColors(llvm::Function &F, int num_colors,
     llvm::Value *Args[] = {Const};
     SP = llvm::CallInst::Create(decr_sp, llvm::ArrayRef<llvm::Value *>(Args),
                                 "", FI);
+    not_spill.insert(SP);
   }
 
-  insertLoadStore(color2inst[min_color], SP, Int64Ty, Int64PtrTy);
+  insertLoadStore(color2inst[min_color], SP, Int64Ty, Int64PtrTy, not_spill);
 }
 } // namespace
 
@@ -483,8 +544,11 @@ namespace sc::backend::reg_alloc {
 llvm::PreservedAnalyses
 RegisterAllocatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
   std::map<llvm::Instruction *, std::set<llvm::Instruction *>> inter_graph;
+  // TODO: maps and sets should use compare fn based on inst2num
+  std::map<llvm::Instruction *, int> inst2num;
   std::vector<llvm::Instruction *> order;
   std::map<llvm::Instruction *, int> color;
+  std::set<llvm::Instruction *> not_spill;
   llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(M.getContext());
   llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(M.getContext());
   llvm::FunctionCallee decr_sp =
@@ -497,24 +561,27 @@ RegisterAllocatePass::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
   for (llvm::Function &F : M) {
     if (F.isDeclaration())
       continue;
+    not_spill.clear();
     while (true) {
       while (true) {
         inter_graph.clear();
-        makeInterferenceGraph(F, inter_graph);
+        inst2num.clear();
+        makeInterferenceGraph(F, inter_graph, inst2num);
         coalesceMovInsts(inter_graph);
         if (resolvePHIInterference(inter_graph, Int64Ty))
           break;
       }
       coalescePHINodes(inter_graph);
       order.clear();
-      color.clear();
-      PerfectEliminationOrdering(inter_graph, order);
+      PerfectEliminationOrdering(inter_graph, inst2num, order);
       std::reverse(order.begin(), order.end());
+      color.clear();
       int num_colors = GreedyColoring(inter_graph, order, color);
       propagatePHINodeColors(color);
       if (num_colors <= MAX_REGISTER)
         break;
-      spillColors(F, num_colors, color, decr_sp, Int64Ty, Int64PtrTy);
+      spillColors(F, num_colors, color, decr_sp, Int64Ty, Int64PtrTy,
+                  not_spill);
     }
     insertSymbols(SM, F, color);
   }
